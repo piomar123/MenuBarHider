@@ -31,12 +31,16 @@ final class HidingController {
     private static let rescanSettleDelay: TimeInterval = 0.6
     /// App launches come in bursts of helper processes; one reconcile per burst is enough.
     private static let runningAppsDebounce: TimeInterval = 1
+    /// How often a due auto-hide re-checks whether the pointer has left the revealed items.
+    static let autoHideHoverRecheck: TimeInterval = 1
 
     private let engine: HidingEngine
     private let items: MenuBarItemSource
     private let runningApps: RunningAppsSource
     private let extras: MenuExtraHost
     private let separators: () -> SeparatorPositions
+    /// True while the pointer rests on the revealed items between `|` and `»`.
+    private let pointerOverExpandedItems: () -> Bool
     private let scheduler: TimerScheduler
     let settings: Settings
     let isInApplications: Bool
@@ -64,6 +68,7 @@ final class HidingController {
         runningApps: RunningAppsSource,
         extras: MenuExtraHost,
         separators: @escaping () -> SeparatorPositions,
+        pointerOverExpandedItems: @escaping () -> Bool = { false },
         isInApplications: Bool,
         settings: Settings,
         scheduler: TimerScheduler
@@ -73,6 +78,7 @@ final class HidingController {
         self.runningApps = runningApps
         self.extras = extras
         self.separators = separators
+        self.pointerOverExpandedItems = pointerOverExpandedItems
         self.isInApplications = isInApplications
         self.settings = settings
         self.scheduler = scheduler
@@ -318,8 +324,19 @@ final class HidingController {
     private func armAutoHide() {
         let seconds = settings.autoHideSeconds
         guard seconds > 0 else { return }
-        pendingHide = scheduler.schedule(after: TimeInterval(seconds)) { [weak self] in
-            self?.hide()
+        armAutoHide(after: TimeInterval(seconds))
+    }
+
+    /// A due auto-hide waits while the pointer is over the revealed items, so they never vanish
+    /// from under it; it fires on the first check after the pointer leaves.
+    private func armAutoHide(after seconds: TimeInterval) {
+        pendingHide = scheduler.schedule(after: seconds) { [weak self] in
+            guard let self else { return }
+            if self.pointerOverExpandedItems() {
+                self.armAutoHide(after: Self.autoHideHoverRecheck)
+            } else {
+                self.hide()
+            }
         }
     }
 

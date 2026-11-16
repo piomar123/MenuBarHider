@@ -30,6 +30,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             runningApps: running,
             extras: extras,
             separators: { [weak statusItem] in statusItem?.separators ?? SeparatorPositions() },
+            pointerOverExpandedItems: { [weak statusItem] in statusItem?.isPointerOverExpandedItems ?? false },
             isInApplications: isInApplications,
             settings: Settings.shared,
             scheduler: DispatchTimerScheduler()

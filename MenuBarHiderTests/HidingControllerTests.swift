@@ -12,6 +12,7 @@ final class HidingControllerTests: XCTestCase {
     private var settings: Settings!
     private var suiteName: String!
     private var leftSeparatorX: CGFloat?
+    private var pointerOverExpandedItems = false
     private var controller: HidingController!
 
     override func setUp() {
@@ -35,6 +36,7 @@ final class HidingControllerTests: XCTestCase {
         HidingController(
             engine: engine, items: items, runningApps: running, extras: extras,
             separators: { [unowned self] in SeparatorPositions(separatorX: 500, leftSeparatorX: self.leftSeparatorX) },
+            pointerOverExpandedItems: { [unowned self] in self.pointerOverExpandedItems },
             isInApplications: isInApplications, settings: settings, scheduler: scheduler)
     }
 
@@ -119,6 +121,38 @@ final class HidingControllerTests: XCTestCase {
         scheduler.fireAll()
         XCTAssertEqual(controller.state, .hidden)
         XCTAssertEqual(engine.restrictions.count, 2)
+    }
+
+    func testAutoHideWaitsWhilePointerIsOverRevealedItems() {
+        settings.autoHideSeconds = 10
+        hideOneApp()
+        controller.show()
+
+        pointerOverExpandedItems = true
+        scheduler.fireAll()
+        XCTAssertEqual(controller.state, .shown, "items under the pointer must not vanish")
+        XCTAssertEqual(scheduler.live.map(\.seconds), [HidingController.autoHideHoverRecheck])
+        scheduler.fireAll()
+        XCTAssertEqual(controller.state, .shown)
+
+        pointerOverExpandedItems = false
+        scheduler.fireAll()
+        XCTAssertEqual(controller.state, .hidden)
+        XCTAssertEqual(engine.restrictions.count, 2)
+    }
+
+    func testToggleCancelsAutoHideDeferredByHover() {
+        settings.autoHideSeconds = 10
+        hideOneApp()
+        controller.show()
+        pointerOverExpandedItems = true
+        scheduler.fireAll()
+
+        controller.toggle()
+        XCTAssertEqual(controller.state, .hidden)
+        pointerOverExpandedItems = false
+        scheduler.fireAll()
+        XCTAssertEqual(engine.restrictions.count, 2, "the deferred re-check must be cancelled by a manual toggle")
     }
 
     func testAutoHideDisabledDoesNotArmTimer() {

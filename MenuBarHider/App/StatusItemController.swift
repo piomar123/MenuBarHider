@@ -44,6 +44,19 @@ final class StatusItemController: NSObject {
         )
     }
 
+    /// True while the pointer is in the menu bar strip spanning `|` to `»`, i.e. over the revealed items.
+    var isPointerOverExpandedItems: Bool {
+        guard leftSeparator.isVisible,
+            let left = leftSeparator.button?.window, let right = statusItem.button?.window,
+            let screen = right.screen
+        else { return false }
+        let pointer = NSEvent.mouseLocation
+        let minX = min(left.frame.minX, right.frame.minX)
+        let maxX = max(left.frame.maxX, right.frame.maxX)
+        let bottom = min(left.frame.minY, right.frame.minY)
+        return (minX...maxX).contains(pointer.x) && (bottom...screen.frame.maxY).contains(pointer.y)
+    }
+
     // MARK: - Status items
 
     private func configure(_ item: NSStatusItem, autosaveName: String) {
