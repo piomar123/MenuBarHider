@@ -13,11 +13,12 @@ final class Settings {
         static let expandedBarWidth = "expandedBarWidth"
         static let visibleExtent = "visibleExtent"
         static let notchReserve = "notchReserve"
+        static let showsClockDate = "showsClockDate"
     }
 
     init(defaults: UserDefaults = .standard) {
         self.defaults = defaults
-        defaults.register(defaults: [Key.autoHideSeconds: 10])
+        defaults.register(defaults: [Key.autoHideSeconds: 10, Key.showsClockDate: true])
     }
 
     /// 0 disables the auto-hide timer.
@@ -54,6 +55,12 @@ final class Settings {
     var notchReserve: CGFloat {
         get { CGFloat(defaults.double(forKey: Key.notchReserve)) }
         set { defaults.set(Double(newValue), forKey: Key.notchReserve) }
+    }
+
+    /// Show the weekday, date and week number under the clock while the pointer rests on it.
+    var showsClockDate: Bool {
+        get { defaults.bool(forKey: Key.showsClockDate) }
+        set { defaults.set(newValue, forKey: Key.showsClockDate) }
     }
 
     var removedMenuExtraIDs: Set<String> {

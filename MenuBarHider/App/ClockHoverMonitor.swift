@@ -6,14 +6,20 @@ final class ClockHoverMonitor {
 
     private let clock = SystemMenuItems()
     private let isRelevant: () -> Bool
+    private let wantsHover: () -> Bool
     private var monitor: Any?
     private var screenObserver: NSObjectProtocol?
     private var isOverClock = false
+    private var hoveredFrame: CGRect?
 
+    /// Pointer on or off the clock, only while `isRelevant`: drives the Notification Center workaround.
     var onChange: ((Bool) -> Void)?
+    /// The clock's frame while the pointer is on it, nil when it leaves; only while `wantsHover`.
+    var onHover: ((CGRect?) -> Void)?
 
-    init(isRelevant: @escaping () -> Bool) {
+    init(isRelevant: @escaping () -> Bool, wantsHover: @escaping () -> Bool = { false }) {
         self.isRelevant = isRelevant
+        self.wantsHover = wantsHover
     }
 
     deinit {
@@ -36,7 +42,16 @@ final class ClockHoverMonitor {
 
     func update() {
         let location = NSEvent.mouseLocation
-        let over = isRelevant() && Self.isInMenuBarStrip(location) && clock.clockFrame(at: location) != nil
+        let relevant = isRelevant()
+        let wantsHover = wantsHover()
+        let frame =
+            (relevant || wantsHover) && Self.isInMenuBarStrip(location) ? clock.clockFrame(at: location) : nil
+        let hovered = wantsHover ? frame : nil
+        if hovered != hoveredFrame {
+            hoveredFrame = hovered
+            onHover?(hovered)
+        }
+        let over = relevant && frame != nil
         guard over != isOverClock else { return }
         isOverClock = over
         Log.ui.error("pointer over clock: \(over), position=(\(location.x), \(location.y))")

@@ -5,6 +5,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var statusItem: StatusItemController!
     private var controller: HidingController!
     private var hoverMonitor: ClockHoverMonitor!
+    private let clockDate = ClockDateTooltip()
     private var runningAppsObservation: NSKeyValueObservation?
     private var nativeAccess: NativePreferencesAccess!
 
@@ -38,12 +39,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         statusItem.attach(controller, nativeAccess: nativeAccess)
 
         // Relevant while already over the clock too: an auto-hide can fire under a resting pointer.
-        hoverMonitor = ClockHoverMonitor { [weak controller] in
-            guard let controller else { return false }
-            return controller.requiresClockHover
-                && (controller.state == .hidden || controller.isNarrow || controller.pointerOverClock)
-        }
+        hoverMonitor = ClockHoverMonitor(
+            isRelevant: { [weak controller] in
+                guard let controller else { return false }
+                return controller.requiresClockHover
+                    && (controller.state == .hidden || controller.isNarrow || controller.pointerOverClock)
+            },
+            wantsHover: { Settings.shared.showsClockDate })
         hoverMonitor.onChange = { [weak controller] over in controller?.pointerOverClock = over }
+        hoverMonitor.onHover = { [clockDate] frame in clockDate.hover(frame) }
         controller.onChange = { [weak self] in
             self?.statusItem.stateChanged()
             self?.hoverMonitor.update()

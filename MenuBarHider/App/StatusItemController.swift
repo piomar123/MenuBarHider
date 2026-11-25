@@ -212,6 +212,10 @@ final class StatusItemController: NSObject {
         controller?.setAutoHideSeconds(sender.tag)
     }
 
+    @objc private func toggleClockDate() {
+        controller?.settings.showsClockDate.toggle()
+    }
+
     @objc private func toggleLaunchAtLogin() {
         let service = SMAppService.mainApp
         do {
@@ -276,6 +280,10 @@ extension StatusItemController: NSMenuDelegate {
         menu.addItem(.separator())
 
         menu.addItem(autoHideMenu())
+        let clockDate = item("Show Date on Clock Hover", symbol: nil, action: #selector(toggleClockDate))
+        clockDate.state = controller.settings.showsClockDate ? .on : .off
+        clockDate.toolTip = "Weekday, date and week number under the clock after half a second."
+        menu.addItem(clockDate)
         let login = item("Launch at Login", symbol: nil, action: #selector(toggleLaunchAtLogin))
         login.state = SMAppService.mainApp.status == .enabled ? .on : .off
         menu.addItem(login)
