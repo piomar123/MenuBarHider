@@ -25,8 +25,11 @@ struct MenuBarSpace: Equatable {
     var minX: CGFloat
     var maxX: CGFloat
     var hasNotch: Bool
+    /// Width the frontmost app's menus take right of the notch when they do not fit left of it.
+    var menuOverlap: CGFloat = 0
 
-    var width: CGFloat { maxX - minX }
+    /// Room for status items once the frontmost app's menus are laid out.
+    var width: CGFloat { maxX - minX - menuOverlap }
 }
 
 /// Owns the intent, the hidden set and the timers, and derives the restriction MenuBarAgent holds.
@@ -45,7 +48,9 @@ final class HidingController {
     /// How often a due auto-hide re-checks whether the pointer has left the revealed items.
     static let autoHideHoverRecheck: TimeInterval = 1
     /// Room beside the notch that macOS keeps for its own overflow chevron, plus some slack.
-    static let notchOverflowMargin: CGFloat = 40
+    static let defaultNotchReserve: CGFloat = 40
+    /// Cap for the learned reserve: one icon that vanished for another reason must not force narrow mode for good.
+    static let maxNotchReserve: CGFloat = 100
 
     private let engine: HidingEngine
     private let items: MenuBarItemSource
@@ -128,8 +133,14 @@ final class HidingController {
     /// `narrowIfCrowded` lets an expand on a crowded notched screen hide the normally visible items.
     func show(narrowIfCrowded: Bool = false) {
         cancelPendingHide()
-        isNarrow = narrowIfCrowded && state == .hidden && barIsTooWideForNotchedScreen
-        Log.controller.error("show, narrow=\(self.isNarrow, privacy: .public)")
+        let bar = separators().bar
+        isNarrow = narrowIfCrowded && state == .hidden && barIsTooWide(for: bar)
+        let room = bar.map { "\(Int($0.width)) overlap=\(Int($0.menuOverlap)) notch=\($0.hasNotch)" } ?? "none"
+        Log.controller.error(
+            """
+            show, narrow=\(self.isNarrow, privacy: .public) room=\(room, privacy: .public) \
+            need=\(self.settings.expandedBarWidth, privacy: .public) reserve=\(self.notchReserve, privacy: .public)
+            """)
         state = .shown
         lastError = nil
         reconcile()
@@ -263,10 +274,12 @@ final class HidingController {
     }
 
     /// Only the Compatibility method: System Settings would flip persistent switches on every expand.
-    private var barIsTooWideForNotchedScreen: Bool {
-        guard canHide, hidingMethod == .assessment, let bar = separators().bar, bar.hasNotch else { return false }
-        return settings.expandedBarWidth > bar.width - Self.notchOverflowMargin
+    private func barIsTooWide(for bar: MenuBarSpace?) -> Bool {
+        guard canHide, hidingMethod == .assessment, let bar, bar.hasNotch else { return false }
+        return settings.expandedBarWidth > bar.width - notchReserve
     }
+
+    private var notchReserve: CGFloat { max(settings.notchReserve, Self.defaultNotchReserve) }
 
     /// No pointerOverClock check: unloaded extras do not block Notification Center.
     private var desiredRemovedExtras: Set<String> {
@@ -342,7 +355,7 @@ final class HidingController {
         settings.hiddenBundleIDs = hiddenSet
         let carried = previousVisible.filter { missing.contains($0) || parked.contains($0) }
         settings.visibleBundleIDs = observedNow.union(carried).subtracting(hiddenSet)
-        if !isNarrow { recordExpandedWidth(positions, leftX: leftX, overflowed: !missing.isEmpty) }
+        recordExpandedWidth(positions, leftX: leftX, items: observed, overflowed: !missing.isEmpty)
         let dump = observed.map { "\($0.bundleID)@\(Int($0.x))" }
         let left = positions.leftSeparatorX.map { "\($0)" } ?? "none"
         let space = positions.bar.map { "\(Int($0.minX))-\(Int($0.maxX)) notch=\($0.hasNotch)" } ?? "none"
@@ -351,18 +364,35 @@ final class HidingController {
             scan: sep=\(separatorX) left=\(left, privacy: .public) bar=\(space, privacy: .public) \
             narrow=\(self.isNarrow, privacy: .public) items=\(dump, privacy: .public) \
             missing=\(missing.sorted(), privacy: .public) hidden=\(self.hiddenSet.sorted(), privacy: .public) \
-            width=\(self.settings.expandedBarWidth, privacy: .public)
+            need=\(self.settings.expandedBarWidth, privacy: .public) reserve=\(self.notchReserve, privacy: .public)
             """)
     }
 
-    /// The width `|` through the screen edge needs, so a later expand can tell whether it fits beside the notch.
-    private func recordExpandedWidth(_ positions: SeparatorPositions, leftX: CGFloat?, overflowed: Bool) {
-        guard let bar = positions.bar else { return }
-        var width = leftX.map { bar.maxX - $0 } ?? settings.expandedBarWidth
-        if bar.hasNotch && (overflowed || leftX == nil && positions.leftSeparatorX != nil) {
-            width = max(width, bar.width + 1)
+    /// Tracks the width the fully expanded bar needs, so the next expand can tell whether it fits.
+    /// A full layout measures it from the leftmost icon to the screen edge and remembers how much of it
+    /// lies outside `|`…`»`; a narrow layout measures only `|`…`»` and adds that remembered part.
+    private func recordExpandedWidth(
+        _ positions: SeparatorPositions, leftX: CGFloat?, items: [MenuBarItemPosition], overflowed: Bool
+    ) {
+        guard let bar = positions.bar, let separatorX = positions.separatorX else { return }
+        if overflowed && !isNarrow {
+            // Icons overflowed although the prediction said they fit: keep more room in reserve.
+            if bar.hasNotch {
+                let needed = bar.width - settings.expandedBarWidth + 8
+                settings.notchReserve = min(max(notchReserve, needed), Self.maxNotchReserve)
+            }
+            return  // `|` is unreliable while icons overflow.
         }
-        settings.expandedBarWidth = width
+        guard let leftX, leftX < separatorX else { return }
+        let group = separatorX - leftX
+        if isNarrow {
+            settings.expandedBarWidth = group + settings.visibleExtent
+        } else {
+            let leftmost = items.map(\.x).filter { $0 < leftX }.min() ?? leftX
+            let width = bar.maxX - leftmost
+            settings.expandedBarWidth = width
+            settings.visibleExtent = width - group
+        }
     }
 
     private func pointerOverClockChanged(from previous: Bool) {

@@ -11,6 +11,8 @@ final class Settings {
         static let hidingMethod = "hidingMethod"
         static let visibleBundleIDs = "visibleBundleIDs"
         static let expandedBarWidth = "expandedBarWidth"
+        static let visibleExtent = "visibleExtent"
+        static let notchReserve = "notchReserve"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -36,10 +38,22 @@ final class Settings {
         set { defaults.set(Array(newValue).sorted(), forKey: Key.visibleBundleIDs) }
     }
 
-    /// Width from `|` to the screen edge in the last full expanded layout; 0 when unknown.
+    /// Width the fully expanded bar needs, leftmost icon to the screen edge; 0 when unknown.
     var expandedBarWidth: CGFloat {
         get { CGFloat(defaults.double(forKey: Key.expandedBarWidth)) }
         set { defaults.set(Double(newValue), forKey: Key.expandedBarWidth) }
+    }
+
+    /// Part of `expandedBarWidth` outside `|`…`»`: what narrow mode hides.
+    var visibleExtent: CGFloat {
+        get { CGFloat(defaults.double(forKey: Key.visibleExtent)) }
+        set { defaults.set(Double(newValue), forKey: Key.visibleExtent) }
+    }
+
+    /// Room beside the notch the bar leaves free, learned from overflows; 0 until one is seen.
+    var notchReserve: CGFloat {
+        get { CGFloat(defaults.double(forKey: Key.notchReserve)) }
+        set { defaults.set(Double(newValue), forKey: Key.notchReserve) }
     }
 
     var removedMenuExtraIDs: Set<String> {

@@ -40,7 +40,8 @@ final class NarrowExpandTests: XCTestCase {
         super.tearDown()
     }
 
-    /// `pinned | middle » right wifi`, collapsed on the wide screen: the expanded bar is 800 pt.
+    /// `pinned | middle » right wifi`, collapsed on the wide screen: the expanded bar is 900 pt,
+    /// 600 of them outside `|`…`»`.
     private func collapseOnWideScreen() {
         running.bundleIDs = ["pinned", "middle", "right", "noicon"]
         items.positions = [
@@ -56,7 +57,8 @@ final class NarrowExpandTests: XCTestCase {
         collapseOnWideScreen()
 
         XCTAssertEqual(controller.hiddenSet, ["middle"])
-        XCTAssertEqual(settings.expandedBarWidth, 800)
+        XCTAssertEqual(settings.expandedBarWidth, 900)
+        XCTAssertEqual(settings.visibleExtent, 600)
         XCTAssertEqual(settings.visibleBundleIDs, ["pinned", "right", "system-item:wifi"])
     }
 
@@ -84,12 +86,11 @@ final class NarrowExpandTests: XCTestCase {
     }
 
     func testExpandOnNotchedScreenStaysNormalWhenBarFits() {
-        leftSeparatorX = 600
-        running.bundleIDs = ["middle"]
-        items.positions = [.init(bundleID: "middle", x: 700)]
-        bar = MenuBarSpace(minX: 0, maxX: 1000, hasNotch: false)
+        leftSeparatorX = 450
+        running.bundleIDs = ["right"]
+        items.positions = [.init(bundleID: "right", x: 700)]
         controller.hide()
-        XCTAssertEqual(settings.expandedBarWidth, 400)
+        XCTAssertEqual(settings.expandedBarWidth, 550)
         bar = Self.notched
 
         controller.toggle()
@@ -125,7 +126,7 @@ final class NarrowExpandTests: XCTestCase {
         XCTAssertFalse(controller.isNarrow)
         XCTAssertEqual(controller.hiddenSet, ["middle"])
         XCTAssertEqual(settings.visibleBundleIDs, ["pinned", "right", "system-item:wifi"])
-        XCTAssertEqual(settings.expandedBarWidth, 800, "a narrow layout says nothing about the full width")
+        XCTAssertEqual(settings.expandedBarWidth, 660, "the 60 pt group plus the 600 pt narrow mode hid")
     }
 
     func testItemDraggedRightOfSeparatorInNarrowModeBecomesVisible() {
@@ -153,19 +154,74 @@ final class NarrowExpandTests: XCTestCase {
         XCTAssertNil(engine.appliedAllowList)
     }
 
-    func testSeparatorInsideNotchIsIgnoredAndBarMarkedTooWide() {
+    func testSeparatorInsideNotchIsIgnored() {
         bar = Self.notched
-        running.bundleIDs = ["pinned", "middle", "zoom"]
-        // `|` and `zoom` overflowed into the system's chevron: `|` reports a position inside the notch.
+        running.bundleIDs = ["middle"]
         leftSeparatorX = 120
         items.positions = [.init(bundleID: "middle", x: 450), .init(bundleID: "right", x: 600)]
 
         controller.hide()
 
         XCTAssertEqual(controller.hiddenSet, ["middle"])
-        XCTAssertGreaterThan(settings.expandedBarWidth, 600)
+    }
+
+    func testFrontmostAppMenusPastTheNotchLeaveTooLittleRoom() {
+        leftSeparatorX = 460
+        running.bundleIDs = ["right"]
+        items.positions = [.init(bundleID: "right", x: 700)]
+        controller.hide()
+        XCTAssertEqual(settings.expandedBarWidth, 540)
+
+        bar = MenuBarSpace(minX: 400, maxX: 1000, hasNotch: true, menuOverlap: 100)
+        controller.toggle()
+
+        XCTAssertTrue(controller.isNarrow, "600 pt beside the notch, 100 of them taken by menus")
+    }
+
+    func testNarrowModeEndsOnceTheGroupFitsAgain() {
+        collapseOnWideScreen()
+        bar = Self.notched
         controller.toggle()
         XCTAssertTrue(controller.isNarrow)
+        // Menus no longer overlap and the group shrank: 60 + 600 does not fit 560 yet, so widen the screen.
+        bar = MenuBarSpace(minX: 300, maxX: 1000, hasNotch: true)
+        leftSeparatorX = 480
+        items.positions = [.init(bundleID: "middle", x: 490)]
+
+        controller.toggle()
+        XCTAssertEqual(settings.expandedBarWidth, 620)
+        controller.toggle()
+
+        XCTAssertFalse(controller.isNarrow, "620 pt fits 700 - 40")
+    }
+
+    func testOverflowRaisesTheReserve() {
+        collapseOnWideScreen()
+        // The prediction says 900 pt fit in 990 beside this notch, yet `middle` overflowed.
+        bar = MenuBarSpace(minX: 0, maxX: 990, hasNotch: true)
+        controller.toggle()
+        XCTAssertFalse(controller.isNarrow)
+        items.positions = [.init(bundleID: "right", x: 600)]
+        leftSeparatorX = 560
+
+        controller.toggle()
+
+        XCTAssertEqual(controller.hiddenSet, ["middle"])
+        XCTAssertEqual(settings.notchReserve, 98)
+        XCTAssertEqual(settings.expandedBarWidth, 900, "`|` is unreliable while icons overflow")
+        controller.toggle()
+        XCTAssertTrue(controller.isNarrow)
+    }
+
+    func testLearnedReserveIsCapped() {
+        collapseOnWideScreen()
+        bar = MenuBarSpace(minX: 0, maxX: 1200, hasNotch: true)
+        controller.toggle()
+        items.positions = [.init(bundleID: "right", x: 600)]
+
+        controller.toggle()
+
+        XCTAssertEqual(settings.notchReserve, 100, "308 needed, capped")
     }
 
     func testRunningItemMissingFromScanKeepsItsState() {

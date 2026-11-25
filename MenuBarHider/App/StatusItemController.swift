@@ -49,8 +49,29 @@ final class StatusItemController: NSObject {
     private static func menuBarSpace(_ screen: NSScreen) -> MenuBarSpace {
         // auxiliaryTopRightArea is in the screen's own coordinates.
         let notchRight = screen.auxiliaryTopRightArea.map { screen.frame.minX + $0.minX }
+        let leftOfNotch = screen.auxiliaryTopLeftArea?.width
         return MenuBarSpace(
-            minX: notchRight ?? screen.frame.minX, maxX: screen.frame.maxX, hasNotch: notchRight != nil)
+            minX: notchRight ?? screen.frame.minX, maxX: screen.frame.maxX, hasNotch: notchRight != nil,
+            menuOverlap: leftOfNotch.map { max(0, frontmostMenuWidth() - $0) } ?? 0)
+    }
+
+    /// Width of the frontmost app's menus, Apple menu included, as laid out from the screen's left edge.
+    /// Menus too wide for the left of the notch continue right of it and take room from the status items.
+    /// Sums the menus' own widths, so it holds whichever screen they were last laid out on.
+    private static func frontmostMenuWidth() -> CGFloat {
+        guard let app = NSWorkspace.shared.frontmostApplication else { return 0 }
+        let element = AXUIElementCreateApplication(app.processIdentifier)
+        AXUIElementSetMessagingTimeout(element, 0.2)
+        guard let bar = AXAttributes.element(element, kAXMenuBarAttribute) else { return 0 }
+        let frames = AXAttributes.elements(bar, kAXChildrenAttribute).compactMap { menu -> CGRect? in
+            guard let origin = AXAttributes.point(menu, kAXPositionAttribute),
+                let size = AXAttributes.size(menu, kAXSizeAttribute)
+            else { return nil }
+            return CGRect(origin: origin, size: size)
+        }
+        guard let first = frames.min(by: { $0.minX < $1.minX }) else { return 0 }
+        let screen = NSScreen.screens.first { $0.frame.minX <= first.minX && first.minX < $0.frame.maxX }
+        return first.minX - (screen?.frame.minX ?? first.minX) + frames.reduce(0) { $0 + $1.width }
     }
 
     /// True while the pointer is in the menu bar strip spanning `|` to `»`, i.e. over the revealed items.
