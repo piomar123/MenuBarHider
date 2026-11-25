@@ -40,7 +40,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         // Relevant while already over the clock too: an auto-hide can fire under a resting pointer.
         hoverMonitor = ClockHoverMonitor { [weak controller] in
             guard let controller else { return false }
-            return controller.requiresClockHover && (controller.state == .hidden || controller.pointerOverClock)
+            return controller.requiresClockHover
+                && (controller.state == .hidden || controller.isNarrow || controller.pointerOverClock)
         }
         hoverMonitor.onChange = { [weak controller] over in controller?.pointerOverClock = over }
         controller.onChange = { [weak self] in

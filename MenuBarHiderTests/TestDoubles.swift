@@ -9,6 +9,24 @@ final class FakeEngine: HidingEngine {
     var restrictions: [[String]] = []
     var releases = 0
     var nextError: Error?
+    /// MenuBarAgentBridge accepts Apple items; the protocol's default (and System Settings) refuses them.
+    var acceptsSystemItems = false
+    var lastRestriction: MenuBarRestriction?
+
+    func validate(_ restriction: MenuBarRestriction) throws {
+        guard acceptsSystemItems || restriction.hiddenSystemItems.isEmpty else {
+            throw HidingRestrictionFailure.unsupportedAppleItems
+        }
+    }
+
+    func restrict(_ restriction: MenuBarRestriction, completion: @escaping (Error?) -> Void) {
+        do { try validate(restriction) } catch {
+            completion(error)
+            return
+        }
+        lastRestriction = restriction
+        restrict(allowedBundleIDs: restriction.allowedBundleIDs, completion: completion)
+    }
 
     func restrict(allowedBundleIDs: [String], completion: @escaping (Error?) -> Void) {
         restrictions.append(allowedBundleIDs)

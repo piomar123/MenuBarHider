@@ -9,6 +9,8 @@ final class Settings {
         static let hiddenBundleIDs = "hiddenBundleIDs"
         static let removedMenuExtraIDs = "removedMenuExtraIDs"
         static let hidingMethod = "hidingMethod"
+        static let visibleBundleIDs = "visibleBundleIDs"
+        static let expandedBarWidth = "expandedBarWidth"
     }
 
     init(defaults: UserDefaults = .standard) {
@@ -26,6 +28,18 @@ final class Settings {
     var hiddenBundleIDs: Set<String> {
         get { Set(defaults.stringArray(forKey: Key.hiddenBundleIDs) ?? []) }
         set { defaults.set(Array(newValue).sorted(), forKey: Key.hiddenBundleIDs) }
+    }
+
+    /// Items seen outside `|`…`»` by the last scans: narrow mode hides them while expanded.
+    var visibleBundleIDs: Set<String> {
+        get { Set(defaults.stringArray(forKey: Key.visibleBundleIDs) ?? []) }
+        set { defaults.set(Array(newValue).sorted(), forKey: Key.visibleBundleIDs) }
+    }
+
+    /// Width from `|` to the screen edge in the last full expanded layout; 0 when unknown.
+    var expandedBarWidth: CGFloat {
+        get { CGFloat(defaults.double(forKey: Key.expandedBarWidth)) }
+        set { defaults.set(Double(newValue), forKey: Key.expandedBarWidth) }
     }
 
     var removedMenuExtraIDs: Set<String> {

@@ -16,6 +16,17 @@ protocol Cancellable {
 struct SeparatorPositions {
     var separatorX: CGFloat?
     var leftSeparatorX: CGFloat?
+    /// Where status items can sit on the screen showing `»`; nil when unknown.
+    var bar: MenuBarSpace?
+}
+
+/// The stretch of a screen's menu bar open to status items: right of the notch, if any.
+struct MenuBarSpace: Equatable {
+    var minX: CGFloat
+    var maxX: CGFloat
+    var hasNotch: Bool
+
+    var width: CGFloat { maxX - minX }
 }
 
 /// Owns the intent, the hidden set and the timers, and derives the restriction MenuBarAgent holds.
@@ -33,6 +44,8 @@ final class HidingController {
     private static let runningAppsDebounce: TimeInterval = 1
     /// How often a due auto-hide re-checks whether the pointer has left the revealed items.
     static let autoHideHoverRecheck: TimeInterval = 1
+    /// Room beside the notch that macOS keeps for its own overflow chevron, plus some slack.
+    static let notchOverflowMargin: CGFloat = 40
 
     private let engine: HidingEngine
     private let items: MenuBarItemSource
@@ -46,6 +59,9 @@ final class HidingController {
     let isInApplications: Bool
 
     private(set) var state: State = .shown
+    /// Expanded with the normally visible items hidden, because the whole bar does not fit
+    /// beside the notch: macOS would move `|` and the leftmost icons into its overflow chevron.
+    private(set) var isNarrow = false
     private(set) var hiddenSet: Set<String>
     private(set) var lastError: Error?
     /// Notification Center refuses to open while the restriction is active, and an already-open
@@ -105,13 +121,15 @@ final class HidingController {
     func toggle() {
         switch state {
         case .shown: hide()
-        case .hidden: show()
+        case .hidden: show(narrowIfCrowded: true)
         }
     }
 
-    func show() {
+    /// `narrowIfCrowded` lets an expand on a crowded notched screen hide the normally visible items.
+    func show(narrowIfCrowded: Bool = false) {
         cancelPendingHide()
-        Log.controller.error("show")
+        isNarrow = narrowIfCrowded && state == .hidden && barIsTooWideForNotchedScreen
+        Log.controller.error("show, narrow=\(self.isNarrow, privacy: .public)")
         state = .shown
         lastError = nil
         reconcile()
@@ -122,6 +140,7 @@ final class HidingController {
     func restoreVisibility() {
         permissionPoll?.cancel()
         permissionPoll = nil
+        isNarrow = false
         show()
         cancelPendingHide()
     }
@@ -137,6 +156,7 @@ final class HidingController {
         }
         refreshHiddenSet()
         state = .hidden
+        isNarrow = false
         reconcile()
         onChange?()
     }
@@ -147,7 +167,7 @@ final class HidingController {
         case .shown:
             refreshHiddenSet()
         case .hidden:
-            show()
+            show(narrowIfCrowded: true)
             cancelPendingHide()
             pendingHide = scheduler.schedule(after: Self.rescanSettleDelay) { [weak self] in
                 self?.hide()
@@ -223,8 +243,29 @@ final class HidingController {
     }
 
     private var desiredRestriction: MenuBarRestriction? {
-        guard state == .hidden, canHide, !(engine.requiresClockHover && pointerOverClock) else { return nil }
-        return restrictionForHiddenItems
+        guard canHide, !(engine.requiresClockHover && pointerOverClock) else { return nil }
+        switch state {
+        case .hidden: return restrictionForHiddenItems
+        case .shown: return isNarrow ? restrictionForVisibleItems : nil
+        }
+    }
+
+    /// Narrow mode: hides what normally stays visible, so the hidden group fits beside the notch.
+    private var restrictionForVisibleItems: MenuBarRestriction? {
+        let visible = settings.visibleBundleIDs
+        let visibleApps = visible.filter { !MenuExtras.isExtra($0) && !SystemItems.isSystemSelection($0) }
+        let visibleSystemItems = SystemItems.hiddenIdentifiers(in: visible)
+        guard !visibleApps.isEmpty || !visibleSystemItems.isEmpty else { return nil }
+        return MenuBarRestriction(
+            allowedBundleIDs: HiddenSet.allowList(
+                running: runningApps.bundleIDs, hidden: visibleApps, alwaysAllowed: SystemItems.alwaysAllowedBundleIDs),
+            hiddenSystemItems: visibleSystemItems)
+    }
+
+    /// Only the Compatibility method: System Settings would flip persistent switches on every expand.
+    private var barIsTooWideForNotchedScreen: Bool {
+        guard canHide, hidingMethod == .assessment, let bar = separators().bar, bar.hasNotch else { return false }
+        return settings.expandedBarWidth > bar.width - Self.notchOverflowMargin
     }
 
     /// No pointerOverClock check: unloaded extras do not block Notification Center.
@@ -279,16 +320,49 @@ final class HidingController {
             MenuExtras.isExtra($0) || running.contains($0) || SystemItems.selectionIDs.contains($0)
         }
         .union(settings.removedMenuExtraIDs)
-        let observed = scanned.positions.filter { !failed.contains($0.bundleID) }
-        observedBundleIDs = Set(observed.map(\.bundleID)).union(observedBundleIDs.intersection(failed))
+        // Items hidden by narrow mode report stale positions; they were visible and stay so.
+        let previousVisible = settings.visibleBundleIDs
+        let parked =
+            isNarrow ? previousVisible.filter { running.contains($0) || SystemItems.isSystemSelection($0) } : []
+        let observed = scanned.positions.filter { !failed.contains($0.bundleID) && !parked.contains($0.bundleID) }
+        let observedNow = Set(observed.map(\.bundleID))
+        observedBundleIDs = observedNow.union(observedBundleIDs.intersection(failed))
         engine.updateObservedBundleIDs(observedBundleIDs, failedBundleIDs: failed)
-        hiddenSet = HiddenSet.partition(
-            items: observed, leftSeparatorX: positions.leftSeparatorX, separatorX: separatorX
-        ).union(hiddenSet.intersection(failed))
+        // Icons that overflow a notched bar vanish from Accessibility: a running app keeps its state.
+        let missing = hiddenSet.union(previousVisible).filter {
+            running.contains($0) && !observedNow.contains($0) && !failed.contains($0) && !parked.contains($0)
+        }
+        let leftX = positions.leftSeparatorX.flatMap { x -> CGFloat? in
+            guard let bar = positions.bar, bar.hasNotch, x < bar.minX else { return x }
+            return nil  // `|` sits in the notch or the system's overflow chevron.
+        }
+        hiddenSet = HiddenSet.partition(items: observed, leftSeparatorX: leftX, separatorX: separatorX)
+            .union(hiddenSet.intersection(failed))
+            .union(hiddenSet.intersection(missing))
         settings.hiddenBundleIDs = hiddenSet
+        let carried = previousVisible.filter { missing.contains($0) || parked.contains($0) }
+        settings.visibleBundleIDs = observedNow.union(carried).subtracting(hiddenSet)
+        if !isNarrow { recordExpandedWidth(positions, leftX: leftX, overflowed: !missing.isEmpty) }
         let dump = observed.map { "\($0.bundleID)@\(Int($0.x))" }
-        let leftX = positions.leftSeparatorX.map { "\($0)" } ?? "none"
-        Log.controller.error("scan: sep=\(separatorX) left=\(leftX) items=\(dump) hidden=\(self.hiddenSet.sorted())")
+        let left = positions.leftSeparatorX.map { "\($0)" } ?? "none"
+        let space = positions.bar.map { "\(Int($0.minX))-\(Int($0.maxX)) notch=\($0.hasNotch)" } ?? "none"
+        Log.controller.error(
+            """
+            scan: sep=\(separatorX) left=\(left, privacy: .public) bar=\(space, privacy: .public) \
+            narrow=\(self.isNarrow, privacy: .public) items=\(dump, privacy: .public) \
+            missing=\(missing.sorted(), privacy: .public) hidden=\(self.hiddenSet.sorted(), privacy: .public) \
+            width=\(self.settings.expandedBarWidth, privacy: .public)
+            """)
+    }
+
+    /// The width `|` through the screen edge needs, so a later expand can tell whether it fits beside the notch.
+    private func recordExpandedWidth(_ positions: SeparatorPositions, leftX: CGFloat?, overflowed: Bool) {
+        guard let bar = positions.bar else { return }
+        var width = leftX.map { bar.maxX - $0 } ?? settings.expandedBarWidth
+        if bar.hasNotch && (overflowed || leftX == nil && positions.leftSeparatorX != nil) {
+            width = max(width, bar.width + 1)
+        }
+        settings.expandedBarWidth = width
     }
 
     private func pointerOverClockChanged(from previous: Bool) {

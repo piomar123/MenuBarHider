@@ -40,8 +40,17 @@ final class StatusItemController: NSObject {
     var separators: SeparatorPositions {
         SeparatorPositions(
             separatorX: statusItem.button?.window?.frame.minX,
-            leftSeparatorX: leftSeparator.isVisible ? leftSeparator.button?.window?.frame.minX : nil
+            leftSeparatorX: leftSeparator.isVisible ? leftSeparator.button?.window?.frame.minX : nil,
+            bar: statusItem.button?.window?.screen.map(Self.menuBarSpace)
         )
+    }
+
+    /// The window of `»` follows the screen whose menu bar was used last.
+    private static func menuBarSpace(_ screen: NSScreen) -> MenuBarSpace {
+        // auxiliaryTopRightArea is in the screen's own coordinates.
+        let notchRight = screen.auxiliaryTopRightArea.map { screen.frame.minX + $0.minX }
+        return MenuBarSpace(
+            minX: notchRight ?? screen.frame.minX, maxX: screen.frame.maxX, hasNotch: notchRight != nil)
     }
 
     /// True while the pointer is in the menu bar strip spanning `|` to `»`, i.e. over the revealed items.
